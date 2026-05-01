@@ -1,0 +1,268 @@
+.download-main {
+  padding: 20px 0 100px;
+}
+
+.download-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid rgba(124,58,237,0.2);
+  border-radius: 20px;
+  padding: 48px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 48px;
+  align-items: center;
+  margin-bottom: 40px;
+  overflow: hidden;
+}
+
+.download-card__glow {
+  position: absolute;
+  top: -80px;
+  right: -80px;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(124,58,237,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.download-card__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.download-card__logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.download-card__name {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.download-card__version {
+  font-size: 13px;
+  color: var(--text3);
+}
+
+.download-card__desc {
+  font-size: 15px;
+  color: var(--text2);
+  line-height: 1.7;
+  margin-bottom: 20px;
+}
+
+.download-card__badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.download-btn {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 32px;
+  background: linear-gradient(135deg, var(--purple), var(--indigo));
+  border-radius: 14px;
+  text-decoration: none;
+  color: #fff;
+  transition: all 0.3s;
+  box-shadow: 0 8px 32px rgba(124,58,237,0.35);
+  white-space: nowrap;
+  min-width: 280px;
+}
+
+.download-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(124,58,237,0.5);
+}
+
+.download-btn__icon {
+  width: 52px;
+  height: 52px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.download-btn__label {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.download-btn__sub {
+  display: block;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.download-card__tos {
+  font-size: 12px;
+  color: var(--text3);
+  text-align: center;
+  margin-top: 14px;
+  line-height: 1.6;
+}
+
+.download-card__tos a {
+  color: var(--purple-light);
+  text-decoration: none;
+}
+.download-card__tos a:hover { text-decoration: underline; }
+
+.download-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 40px;
+}
+
+.download-section {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 32px;
+}
+
+.download-section__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border2);
+}
+
+.requirements-table {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.requirements-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.requirements-row__label {
+  color: var(--text3);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.requirements-row__value {
+  color: var(--text2);
+  text-align: right;
+}
+
+.changelog-item__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.changelog-item__version {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--purple-light);
+}
+
+.changelog-item__date {
+  font-size: 12px;
+  color: var(--text3);
+}
+
+.changelog-item__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changelog-item__list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text2);
+}
+
+.changelog-item__list li svg {
+  color: var(--purple-light);
+  flex-shrink: 0;
+}
+
+.install-steps {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 40px;
+}
+
+.install-steps h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 32px;
+}
+
+.install-steps__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+}
+
+.install-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.install-step__num {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(124,58,237,0.15);
+  border: 1px solid rgba(124,58,237,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--purple-light);
+}
+
+.install-step p {
+  font-size: 14px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .download-card { grid-template-columns: 1fr; }
+  .download-btn { min-width: unset; }
+  .download-cols { grid-template-columns: 1fr; }
+  .install-steps__grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 500px) {
+  .download-card { padding: 28px; }
+  .install-steps__grid { grid-template-columns: 1fr; }
+  .install-steps { padding: 24px; }
+}

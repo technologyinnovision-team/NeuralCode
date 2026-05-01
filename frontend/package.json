@@ -1,0 +1,108 @@
+{
+  "name": "neuralcode",
+  "private": true,
+  "version": "1.0.4",
+  "type": "module",
+  "main": "dist-electron/electron-main.cjs",
+  "scripts": {
+    "dev": "vite --port 5000 --strictPort",
+    "dev-electron": "electron-builder install-app-deps && npm run build-electron-main && concurrently \"npm run dev\" \"wait-on http://localhost:5000 && electron .\"",
+    "build": "tsc -b && vite build && npm run build-electron-main",
+    "build-electron-main": "tsc -p tsconfig.electron.json",
+    "copy-backend": "if not exist dist\\backend mkdir dist\\backend && copy ..\\backend\\*.py dist\\backend\\ && xcopy ..\\backend\\agent dist\\backend\\agent\\ /E /I /H /Y && xcopy ..\\backend\\tools dist\\backend\\tools\\ /E /I /H /Y && xcopy ..\\backend\\rules dist\\backend\\rules\\ /E /I /H /Y && copy ..\\backend\\requirements.txt dist\\backend\\",
+    "build-electron": "set \"VITE_ELECTRON_BUILD=1\" && npm run build && npm run copy-backend && electron-builder --win --publish never",
+    "build-electron-all": "set \"VITE_ELECTRON_BUILD=1\" && npm run build && electron-builder --win --mac --linux --publish never",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@xterm/addon-clipboard": "^0.2.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.5",
+    "react-arborist": "^3.5.0",
+    "react-complex-tree": "^2.6.1",
+    "react-dom": "^19.2.5",
+    "react-icons": "^5.6.0",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.10.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-web-links": "^0.9.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.3.0",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.5.0",
+    "concurrently": "^8.2.2",
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0",
+    "eslint": "^10.2.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
+    "postcss": "^8.5.12",
+    "tailwindcss": "^3.4.19",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.58.2",
+    "vite": "^8.0.10",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.neuralcode.app",
+    "productName": "NeuralCode",
+    "asar": true,
+    "asarUnpack": [
+      "dist/backend/**"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "certificateFile": null,
+      "signingHashAlgorithms": [
+        "sha256"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    }
+  }
+}

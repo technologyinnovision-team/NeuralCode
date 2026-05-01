@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Terminal Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #output { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; margin: 10px 0; }
+        input { width: 80%; padding: 5px; }
+        button { padding: 5px 10px; }
+    </style>
+</head>
+<body>
+    <h1>Terminal WebSocket Test</h1>
+    <div id="output"></div>
+    <input type="text" id="input" placeholder="Type command here...">
+    <button onclick="sendCommand()">Send</button>
+
+    <script>
+        const output = document.getElementById('output');
+        const input = document.getElementById('input');
+        let ws;
+
+        function connect() {
+            ws = new WebSocket('ws://localhost:8000/terminal');
+            
+            ws.onopen = () => {
+                addOutput('Connected to terminal!');
+            };
+            
+            ws.onmessage = (event) => {
+                addOutput(event.data);
+            };
+            
+            ws.onerror = (error) => {
+                addOutput('Error: ' + error);
+            };
+            
+            ws.onclose = () => {
+                addOutput('Connection closed');
+            };
+        }
+
+        function sendCommand() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(input.value + '\r');
+                input.value = '';
+            } else {
+                addOutput('Not connected to terminal');
+            }
+        }
+
+        function addOutput(text) {
+            output.innerHTML += text;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        // Connect on page load
+        connect();
+
+        // Allow pressing Enter to send
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendCommand();
+            }
+        });
+    </script>
+</body>
+</html>

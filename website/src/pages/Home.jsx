@@ -7,7 +7,7 @@ import screenshot3 from '../assets/image_1777660730941.png'
 import screenshot4 from '../assets/image_1777660746479.png'
 import screenshot5 from '../assets/image_1777660758977.png'
 
-const DOWNLOAD_URL = 'https://github.com/technologyinnovision-team/technologyinnovision-team.github.io/archive/refs/tags/NeuralCode-win-1.0.4'
+const DOWNLOAD_URL = 'https://github.com/technologyinnovision-team/technologyinnovision-team.github.io/releases/download/v1.0.4/NeuralCode-win-1.0.4.exe'
 
 const features = [
   {

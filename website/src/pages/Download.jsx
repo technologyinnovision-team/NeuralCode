@@ -1,6 +1,6 @@
 import './Download.css'
 
-const DOWNLOAD_URL = 'https://github.com/technologyinnovision-team/technologyinnovision-team.github.io/archive/refs/tags/NeuralCode-win-1.0.4'
+const DOWNLOAD_URL = 'https://github.com/technologyinnovision-team/technologyinnovision-team.github.io/releases/download/v1.0.4/NeuralCode-win-1.0.4.exe'
 
 const requirements = [
   { label: 'OS', value: 'Windows 10 or Windows 11 (64-bit)' },

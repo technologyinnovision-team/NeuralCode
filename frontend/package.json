@@ -9,8 +9,9 @@
     "dev-electron": "electron-builder install-app-deps && npm run build-electron-main && concurrently \"npm run dev\" \"wait-on http://localhost:5000 && electron .\"",
     "build": "tsc -b && vite build && npm run build-electron-main",
     "build-electron-main": "tsc -p tsconfig.electron.json",
-    "copy-backend": "if not exist dist\\backend mkdir dist\\backend && copy ..\\backend\\*.py dist\\backend\\ && xcopy ..\\backend\\agent dist\\backend\\agent\\ /E /I /H /Y && xcopy ..\\backend\\tools dist\\backend\\tools\\ /E /I /H /Y && xcopy ..\\backend\\rules dist\\backend\\rules\\ /E /I /H /Y && copy ..\\backend\\requirements.txt dist\\backend\\",
-    "build-electron": "set \"VITE_ELECTRON_BUILD=1\" && npm run build && npm run copy-backend && electron-builder --win --publish never",
+    "build-backend-exe": "cd ..\\backend && pip install pyinstaller && pyinstaller server.spec --clean",
+    "build-electron": "set \"VITE_ELECTRON_BUILD=1\" && npm run build && electron-builder --win --publish never",
+    "build-electron-full": "set \"VITE_ELECTRON_BUILD=1\" && npm run build-backend-exe && npm run build && electron-builder --win --publish never",
     "build-electron-all": "set \"VITE_ELECTRON_BUILD=1\" && npm run build && electron-builder --win --mac --linux --publish never",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -59,8 +60,12 @@
     "appId": "com.neuralcode.app",
     "productName": "NeuralCode",
     "asar": true,
-    "asarUnpack": [
-      "dist/backend/**"
+    "extraResources": [
+      {
+        "from": "../backend/dist/server",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
     ],
     "directories": {
       "buildResources": "assets",

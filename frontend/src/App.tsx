@@ -75,6 +75,26 @@ export default function App() {
   async function openWorkspace() {
     try {
       setLoadingWorkspace(true)
+
+      // In Electron, use the native OS dialog instead of the backend's tkinter picker
+      if (isElectron && (window as any).electronAPI?.openFileDialog) {
+        const folderPath: string | null = await (window as any).electronAPI.openFileDialog()
+        if (!folderPath) return // user cancelled
+        const res = await fetch(`${BACKEND_URL}/workspace/set`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: folderPath }),
+        })
+        if (!res.ok) throw new Error("Failed to set workspace")
+        const data = await res.json()
+        if (data.workspace) {
+          const parts = data.workspace.split(/[\\/]/)
+          setWorkspace(parts[parts.length - 1] || data.workspace)
+        }
+        return
+      }
+
+      // Web / dev mode: let the backend show its own dialog
       const res = await fetch(`${BACKEND_URL}/workspace/open`, { method: "POST" })
       if (!res.ok) throw new Error("Failed to open workspace")
       const data = await res.json()

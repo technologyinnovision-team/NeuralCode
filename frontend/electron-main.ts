@@ -24,20 +24,9 @@ function getBackendDir(): string {
     return path.join(__dirname, "..", "..", "backend")
   }
 
-  const resourcesPath = process.resourcesPath
-  const unpackedBackend = path.join(
-    resourcesPath,
-    "app.asar.unpacked",
-    "dist",
-    "backend"
-  )
-
-  if (fs.existsSync(unpackedBackend)) {
-    return unpackedBackend
-  }
-
-  // Fallback for packaging modes where dist is extracted directly.
-  return path.join(resourcesPath, "dist", "backend")
+  // In packaged app the backend is placed via extraResources → resources/backend/
+  // This avoids asar entirely, so no path guessing needed.
+  return path.join(process.resourcesPath, "backend")
 }
 
 // Get Python executable path
@@ -125,40 +114,88 @@ function getPythonExecutable(): string {
   throw new Error("Python not found in PATH")
 }
 
+function findBundledExecutable(): string | null {
+  const backendDir = getBackendDir()
+  const candidates = isWindows ? ["server.exe", "server"] : ["server"]
+
+  for (const candidate of candidates) {
+    const candidatePath = path.join(backendDir, candidate)
+    if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+      return candidatePath
+    }
+  }
+
+  if (!fs.existsSync(backendDir)) {
+    return null
+  }
+
+  const recursiveFind = (dir: string): string | null => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = path.join(dir, entry.name)
+      if (entry.isFile() && candidates.includes(entry.name)) {
+        return entryPath
+      }
+      if (entry.isDirectory()) {
+        const found = recursiveFind(entryPath)
+        if (found) {
+          return found
+        }
+      }
+    }
+    return null
+  }
+
+  return recursiveFind(backendDir)
+}
+
 // Start Python backend
 function startPythonBackend(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      const pythonExe = getPythonExecutable()
       const backendDir = getBackendDir()
 
-      const serverScript = path.join(backendDir, "server.py")
-      const pythonArgs =
-        isWindows &&
-        (pythonExe.toLowerCase().endsWith("\\py.exe") ||
-          pythonExe.toLowerCase() === "py" ||
-          pythonExe.toLowerCase() === "py.exe")
-          ? ["-3", serverScript]
-          : [serverScript]
+      // Prefer the bundled executable so the app works without Python installed
+      const bundledExe = findBundledExecutable()
 
-      console.log(`Starting Python backend: ${pythonExe} ${pythonArgs.join(" ")}`)
+      let spawnCmd: string
+      let spawnArgs: string[]
 
-      pythonProcess = spawn(pythonExe, pythonArgs, {
+      if (bundledExe) {
+        console.log(`Using bundled server executable: ${bundledExe}`)
+        spawnCmd = bundledExe
+        spawnArgs = []
+      } else {
+        // Fall back to system Python
+        const pythonExe = getPythonExecutable()
+        const serverScript = path.join(backendDir, "server.py")
+        spawnArgs =
+          isWindows &&
+          (pythonExe.toLowerCase().endsWith("\\py.exe") ||
+            pythonExe.toLowerCase() === "py" ||
+            pythonExe.toLowerCase() === "py.exe")
+            ? ["-3", serverScript]
+            : [serverScript]
+        console.log(`Starting Python backend: ${pythonExe} ${spawnArgs.join(" ")}`)
+        spawnCmd = pythonExe
+      }
+
+      pythonProcess = spawn(spawnCmd, spawnArgs, {
         cwd: backendDir,
         stdio: ["ignore", "pipe", "pipe"],
         detached: !isWindows,
+        windowsHide: true,
       })
 
       pythonProcess.stdout?.on("data", (data) => {
-        console.log(`[Python] ${data.toString()}`)
+        console.log(`[Backend] ${data.toString()}`)
       })
 
       pythonProcess.stderr?.on("data", (data) => {
-        console.error(`[Python Error] ${data.toString()}`)
+        console.error(`[Backend Error] ${data.toString()}`)
       })
 
       pythonProcess.on("error", (err) => {
-        console.error("Failed to start Python backend:", err)
+        console.error("Failed to start backend:", err)
         reject(err)
       })
 
@@ -281,9 +318,10 @@ app.on("ready", async () => {
     createMenu()
   } catch (err) {
     console.error("Failed to start app:", err)
+    const message = err instanceof Error ? err.message : String(err)
     dialog.showErrorBox(
-      "Error",
-      "Failed to start NeuralCode. Please ensure Python is installed."
+      "Startup Error",
+      `Failed to start NeuralCode backend.\n\n${message}\n\nPlease reinstall the application.`
     )
     app.quit()
   }

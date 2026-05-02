@@ -1,7 +1,16 @@
 import asyncio
 import json
 import os
+import sys
 import threading
+
+# When running as a PyInstaller bundle, data files (rules/) live in sys._MEIPASS.
+# os.path.dirname(__file__) is unreliable in frozen mode, so we resolve once here.
+_BASE_DIR: str = (
+    sys._MEIPASS  # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+    else os.path.dirname(os.path.abspath(__file__))
+)
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -153,7 +162,7 @@ def build_system_prompt(mode: str = "agent", task_context: str = "") -> str:
     Optionally accepts a task_context string (e.g. the user's first message)
     used to inject smart file-context from the index.
     """
-    rules_dir = os.path.join(os.path.dirname(__file__), "rules")
+    rules_dir = os.path.join(_BASE_DIR, "rules")
     mode = (mode or "agent").strip().lower()
     parts = [BASE_TOOL_SYSTEM_PROMPT.strip()]
 
@@ -486,6 +495,25 @@ async def open_workspace():
     workspace = set_workspace(path)
 
     # Rebuild the smart file index in the background
+    try:
+        from context_manager import rebuild_index
+        await loop.run_in_executor(None, rebuild_index)
+    except Exception:
+        pass
+
+    return {"workspace": workspace}
+
+
+@app.post("/workspace/set")
+async def set_workspace_path(data: dict):
+    """Set the workspace to a given path directly (used by Electron native dialog)."""
+    path = data.get("path")
+    if not path:
+        return {"workspace": None}
+
+    workspace = set_workspace(path)
+
+    loop = asyncio.get_event_loop()
     try:
         from context_manager import rebuild_index
         await loop.run_in_executor(None, rebuild_index)

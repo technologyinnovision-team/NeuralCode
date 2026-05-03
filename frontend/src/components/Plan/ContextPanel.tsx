@@ -1,4 +1,4 @@
-import { Brain, FileText, FilePlus, FileEdit, Search, Trash2, Info, Pin, PinOff, Zap, X } from "lucide-react"
+import { Brain, FileText, FilePlus, FileEdit, Search, Trash2, Info, Pin, Zap, X } from "lucide-react"
 
 export type ContextFile = {
   path: string

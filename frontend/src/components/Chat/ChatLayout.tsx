@@ -9,7 +9,7 @@ import StatusBar from "../Layout/StatusBar"
 import MonacoFileTab from "../Editor/MonacoFileTab"
 import type { ToolHistoryItem } from "../Plan/ToolsHistoryPanel"
 import type { ContextFile, SmartFile, PinnedFile } from "../Plan/ContextPanel"
-import { getPinnedFiles, setPinnedFiles, togglePin } from "../../utils/pinnedFiles"
+import { getPinnedFiles, togglePin } from "../../utils/pinnedFiles"
 import {
   loadSessions, saveSession, deleteSession, clearAllSessions,
   getCurrentSessionId, setCurrentSessionId, generateSessionId, deriveTitle,
@@ -93,6 +93,8 @@ type StreamEvent =
   | { type: "task_status"; status: "pending" | "completed" }
   | { type: "agent_phase"; phase: string; label: string }
   | { type: "ui_block"; ui_type: "todos"; title?: string; items?: Array<{ text: string; done: boolean }> }
+  | { type: "context_init"; smart_files?: Array<{ path: string; chars: number; tokens: number }>; pinned_files?: Array<{ path: string; chars: number; tokens: number }> }
+  | { type: "context_update"; files?: Array<{ path: string; chars: number; tokens: number; action: string }>; searched_queries?: string[]; total_chars?: number }
   | { type: "final"; content?: string }
 
 function fileTabId(path: string) {

@@ -42,8 +42,14 @@ export default function ChatMessage({
 }) {
   const isUser = message.role === "user"
 
-  const streamingContent = (message.streamingContent as string) || ""
-  const finalContent = (message.content as string) || ""
+  const _cleanMarker = (s: string) =>
+    s.replace(/task_status=completed/g, "")
+     .replace(/sk_status=completed/g, "")
+     .replace(/^\s*ta\s*$/gm, "")
+     .replace(/\[tool call\]/gi, "")
+     .replace(/\n{3,}/g, "\n\n")
+  const streamingContent = _cleanMarker((message.streamingContent as string) || "")
+  const finalContent     = _cleanMarker((message.content as string) || "")
   const eventLog = Array.isArray(message.eventLog) ? (message.eventLog as RawEvent[]) : []
   const showThinking = !!message.streaming && !!message.awaitingFirstResponse
 
@@ -81,8 +87,14 @@ export default function ChatMessage({
     let textKey = ""
 
     const flushText = () => {
-      if (textBuf.trim()) {
-        items.push({ kind: "text", content: textBuf, key: textKey })
+      const cleaned = textBuf
+        .replace(/task_status=completed/g, "")
+        .replace(/sk_status=completed/g, "")
+        .replace(/^\s*ta\s*$/gm, "")
+        .replace(/\[tool call\]/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+      if (cleaned.trim()) {
+        items.push({ kind: "text", content: cleaned, key: textKey })
       }
       textBuf = ""
       textKey = ""
@@ -148,25 +160,27 @@ export default function ChatMessage({
     <div className={`w-full flex ${isUser ? "justify-end" : "justify-start"} nc-fade-in`}>
       <div
         className={`flex gap-2.5 sm:gap-3 max-w-full ${
-          isUser ? "flex-row-reverse max-w-[85%] sm:max-w-[75%]" : "flex-row max-w-full sm:max-w-[88%]"
+          isUser ? "flex-row-reverse max-w-[88%] sm:max-w-[78%]" : "flex-row max-w-full sm:max-w-[90%]"
         }`}
       >
+        {/* Avatar */}
         <div
-          className={`shrink-0 h-8 w-8 sm:h-9 sm:w-9 rounded-2xl flex items-center justify-center border ${
+          className={`shrink-0 h-8 w-8 sm:h-9 sm:w-9 rounded-2xl flex items-center justify-center ${
             isUser
-              ? "bg-[color:var(--accent)] text-white border-transparent"
-              : "bg-gradient-to-br from-[#7c5cff] to-[#22d3ee] text-white border-transparent"
+              ? "bg-gradient-to-br from-[#9479ff] to-[#7c5cff] text-white shadow-[0_4px_14px_rgba(124,92,255,0.4)]"
+              : "bg-gradient-to-br from-[#7c5cff] via-[#6247f5] to-[#22d3ee] text-white shadow-[0_4px_14px_rgba(124,92,255,0.35)]"
           }`}
           aria-hidden="true"
         >
-          {isUser ? <User size={15} /> : <Sparkles size={15} />}
+          {isUser ? <User size={14} /> : <Sparkles size={14} />}
         </div>
 
+        {/* Message bubble */}
         <div
-          className={`min-w-0 rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-sm leading-relaxed border ${
+          className={`min-w-0 rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-sm leading-relaxed ${
             isUser
-              ? "bg-[color:var(--accent)] text-white border-transparent shadow-[0_8px_30px_rgba(124,92,255,0.25)]"
-              : "bg-[color:var(--surface)] text-[color:var(--foreground)] border-[color:var(--border)] shadow-[0_8px_30px_rgba(0,0,0,0.25)]"
+              ? "nc-user-message text-white"
+              : "bg-[color:var(--surface)] text-[color:var(--foreground)] border border-[color:var(--border)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
           }`}
         >
           {isUser ? (
@@ -174,8 +188,16 @@ export default function ChatMessage({
           ) : (
             <>
               {showThinking && (
-                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] px-3 py-1 text-[11px] text-[color:var(--muted-foreground)]">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)] nc-pulse-dot" />
+                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] px-3 py-1.5 text-[11px] text-[color:var(--muted-foreground)]">
+                  <span className="inline-flex gap-0.5">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)] nc-pulse-dot"
+                        style={{ animationDelay: `${i * 200}ms` }}
+                      />
+                    ))}
+                  </span>
                   Thinking…
                 </div>
               )}
@@ -238,14 +260,13 @@ export default function ChatMessage({
 
                     return null
                   })}
-
                 </div>
               ) : showFinalText ? (
                 <div className="nc-prose">
                   <MarkdownRenderer content={finalContent} />
                 </div>
               ) : message.streaming && !showThinking && streamingContent.trim() ? (
-                <div className="text-[color:var(--foreground)] whitespace-pre-wrap">
+                <div className="text-[color:var(--foreground)] whitespace-pre-wrap leading-relaxed">
                   {streamingContent}
                 </div>
               ) : null}

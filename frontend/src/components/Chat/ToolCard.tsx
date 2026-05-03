@@ -17,7 +17,9 @@ type Status = "running" | "ok" | "error" | "idle"
 const iconForName = (name: string) => {
   const n = (name || "").toLowerCase()
   if (n.includes("create_file") || n.includes("write_file")) return FilePlus
+  if (n.includes("patch_file")) return FileEdit
   if (n.includes("lines_editor")) return Layers
+  if (n.includes("rename_file")) return FileEdit
   if (n.includes("write")) return FileEdit
   if (n.includes("read")) return FileText
   if (n.includes("search")) return Search
@@ -31,6 +33,8 @@ const FRIENDLY: Record<string, string> = {
   read_content_file:    "Read file",
   search_in_files:      "Search files",
   lines_editor:         "Edit lines",
+  patch_file:           "Patch file",
+  rename_file:          "Rename file",
   create_file:          "Create file",
   run_command:          "Run command",
   list_files:           "List files",
@@ -92,25 +96,30 @@ function resultSummary(name: string, result: unknown, status: Status): string | 
     return `Created — ${r.lines ?? "?"} lines`
   }
 
+  if (typeof r.info === "string") {
+    const msg = r.info
+    return msg.length > 80 ? msg.slice(0, 80) + "…" : msg
+  }
+
   return null
 }
 
 function StatusBadge({ status }: { status: Status }) {
   if (status === "ok")
     return (
-      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-[color:var(--success)] bg-[color:var(--success)]/10 border border-[color:var(--success)]/25 rounded-full px-1.5 py-0.5 shrink-0">
+      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/25 rounded-full px-1.5 py-0.5 shrink-0">
         <CheckCircle2 size={8} /> done
       </span>
     )
   if (status === "error")
     return (
-      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-[color:var(--danger)] bg-[color:var(--danger)]/10 border border-[color:var(--danger)]/25 rounded-full px-1.5 py-0.5 shrink-0">
+      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-red-400 bg-red-400/10 border border-red-400/25 rounded-full px-1.5 py-0.5 shrink-0">
         <AlertCircle size={8} /> error
       </span>
     )
   if (status === "running")
     return (
-      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-[color:var(--warning)]/90 bg-[color:var(--warning)]/8 border border-[color:var(--warning)]/20 rounded-full px-1.5 py-0.5 shrink-0">
+      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-400 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 shrink-0">
         <Loader2 size={8} className="animate-spin" /> running
       </span>
     )
@@ -133,18 +142,29 @@ export default function ToolCard({
   const summary = resultSummary(name, result, status)
 
   return (
-    <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--surface-2)]/50 px-3 py-2 flex items-center gap-2.5 nc-fade-in">
-      <div className="h-6 w-6 rounded-md bg-[color:var(--accent)]/10 border border-[color:var(--accent)]/20 flex items-center justify-center text-[color:var(--accent)] shrink-0">
-        <Icon size={12} />
+    <div className="rounded-xl border border-[color:var(--border)] bg-gradient-to-r from-[color:var(--surface-2)] to-[color:var(--surface)] px-3 py-2.5 flex items-center gap-3 nc-fade-in hover:border-[color:var(--border-strong)] transition-colors">
+      <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${
+        status === "ok"
+          ? "bg-emerald-500/12 border border-emerald-500/25 text-emerald-400"
+          : status === "error"
+          ? "bg-red-500/12 border border-red-500/25 text-red-400"
+          : status === "running"
+          ? "bg-[color:var(--accent)]/12 border border-[color:var(--accent)]/25 text-[color:var(--accent)]"
+          : "bg-[color:var(--accent)]/8 border border-[color:var(--accent)]/15 text-[color:var(--muted-foreground)]"
+      }`}>
+        {status === "running"
+          ? <Loader2 size={12} className="animate-spin" />
+          : <Icon size={12} />
+        }
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[11px] font-medium text-[color:var(--foreground)] shrink-0">
+          <span className="text-[11px] font-semibold text-[color:var(--foreground)] shrink-0">
             {friendlyName(name)}
           </span>
           {sub && (
-            <span className="text-[10px] font-mono text-[color:var(--muted-foreground)] truncate max-w-[200px]">
+            <span className="text-[10px] font-mono text-[color:var(--muted-foreground)] truncate max-w-[220px]">
               {sub}
             </span>
           )}

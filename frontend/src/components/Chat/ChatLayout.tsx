@@ -8,6 +8,8 @@ import WorkspacePanel from "../Layout/WorkspacePanel"
 import StatusBar from "../Layout/StatusBar"
 import MonacoFileTab from "../Editor/MonacoFileTab"
 import type { ToolHistoryItem } from "../Plan/ToolsHistoryPanel"
+import type { ContextFile, SmartFile, PinnedFile } from "../Plan/ContextPanel"
+import { getPinnedFiles, setPinnedFiles, togglePin } from "../../utils/pinnedFiles"
 import {
   loadSessions, saveSession, deleteSession, clearAllSessions,
   getCurrentSessionId, setCurrentSessionId, generateSessionId, deriveTitle,
@@ -17,7 +19,7 @@ import { MessageSquare, X, FileCode } from "lucide-react"
 
 const TOOL_TAGS = new Set([
   "Call_Tool_List_Files", "read_content_file", "search_in_files",
-  "lines_editor", "create_file", "run_command",
+  "lines_editor", "create_file", "run_command", "patch_file", "rename_file",
 ])
 const FILE_EDIT_TOOLS = new Set(["lines_editor", "create_file", "write_file"])
 const UI_TAGS = new Set(["todos"])
@@ -78,7 +80,7 @@ export type ChatMsg = {
   toolResults?: unknown[]
 }
 
-type Mode = "agent" | "plan" | "debug" | "ask"
+type Mode = "agent"
 type SendPayload = { message: string; model: string; mode: Mode; images?: AttachedImage[] }
 
 type StreamEvent =
@@ -122,7 +124,9 @@ export default function ChatLayout({
     const id = getCurrentSessionId()
     if (id) {
       const s = loadSessions().find((s) => s.id === id)
-      if (s) return s.messages.map((m) => ({ role: m.role, content: m.content }))
+      if (s) return s.messages
+        .filter((m) => m.role === "user" || (m.content || "").replace(/\[tool call\]/gi, "").trim().length > 0)
+        .map((m) => ({ role: m.role, content: m.content }))
     }
     return []
   })
@@ -141,9 +145,38 @@ export default function ChatLayout({
   const [stickyTodos, setStickyTodos] = useState<Array<{ text: string; done: boolean }>>([])
   const [activeRail, setActiveRail] = useState<RailKey>("chat")
   const [history, setHistory] = useState<ToolHistoryItem[]>([])
+  const [contextFiles, setContextFiles] = useState<ContextFile[]>([])
+  const [searchedQueries, setSearchedQueries] = useState<string[]>([])
+  const [totalContextChars, setTotalContextChars] = useState(0)
+  const [smartFiles, setSmartFiles] = useState<SmartFile[]>([])
+  const [pinnedFilePaths, setPinnedFilePaths] = useState<string[]>(() => getPinnedFiles())
+  const [pinnedFileInfos, setPinnedFileInfos] = useState<PinnedFile[]>([])
   const [composerPrefill, setComposerPrefill] = useState<string | undefined>(undefined)
   const [pendingChanges, setPendingChanges] = useState<Map<string, PendingChange>>(new Map())
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([])
+
+  // ─── Abort controller for the running agent stream ───────────────────────
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  function stopAgent() {
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    setIsRunning(false)
+    setRunStatusLabel(null)
+    setMessages((prev) => {
+      const updated = [...prev]
+      const last = updated[updated.length - 1]
+      if (last && last.streaming) {
+        updated[updated.length - 1] = {
+          ...last,
+          streaming: false,
+          awaitingFirstResponse: false,
+          content: last.streamingContent || last.content || "[Stopped]",
+        }
+      }
+      return updated
+    })
+  }
 
   // ─── Ref for pendingChanges (fix stale closure in streaming handler) ───────
   const pendingChangesRef = useRef<Map<string, PendingChange>>(new Map())
@@ -169,6 +202,32 @@ export default function ChatLayout({
   useEffect(() => {
     if (workspace) fetchWorkspaceFiles()
   }, [workspace, fetchWorkspaceFiles])
+
+  // ─── Pinned file size hydration ───────────────────────────────────────────
+  // Fetch character/token counts for pinned files from the backend so the
+  // Context Panel shows accurate sizes immediately — not just after a task runs.
+  const fetchPinnedFileStats = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) {
+      setPinnedFileInfos([])
+      return
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/workspace/file-stats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { stats: Array<{ path: string; chars: number; tokens: number }> }
+        setPinnedFileInfos(data.stats || [])
+      }
+    } catch { /* backend offline — sizes will appear after next task */ }
+  }, [])
+
+  // Hydrate pinned file sizes on mount and whenever the pinned paths change.
+  useEffect(() => {
+    fetchPinnedFileStats(pinnedFilePaths)
+  }, [pinnedFilePaths, fetchPinnedFileStats])
 
   // ─── Session persistence ──────────────────────────────────────────────────
   const persistSession = useCallback((msgs: ChatMsg[], sessionId: string | null) => {
@@ -209,7 +268,9 @@ export default function ChatLayout({
     if (!session) return
     setCurrentSessionId2(id)
     setCurrentSessionId(id)
-    setMessages(session.messages.map((m) => ({ role: m.role, content: m.content })))
+    setMessages(session.messages
+      .filter((m) => m.role === "user" || (m.content || "").replace(/\[tool call\]/gi, "").trim().length > 0)
+      .map((m) => ({ role: m.role, content: m.content })))
     setActiveTabId("chat")
     setTabs((prev) => {
       const fileOnly = prev.filter((t) => t.type !== "chat")
@@ -224,6 +285,13 @@ export default function ChatLayout({
     setMessages([])
     setStickyTodos([])
     setHistory([])
+    setContextFiles([])
+    setSearchedQueries([])
+    setTotalContextChars(0)
+    setSmartFiles([])
+    // Note: pinnedFileInfos intentionally NOT cleared here — pinned files
+    // are persistent across sessions and their sizes are always re-fetched
+    // via the pinnedFilePaths useEffect above.
     setPendingChanges(new Map())
     setActiveTabId("chat")
     setTabs([{ type: "chat", id: "chat" }])
@@ -348,7 +416,7 @@ export default function ChatLayout({
     const max = Number(config?.contextWindowTokens || 8192)
     setContextMaxTokens(Number.isFinite(max) && max > 0 ? max : 8192)
     setSelectedModel(String(config?.selectedModel || (config?.enabledModels?.[0] || "")))
-    setSelectedMode((config?.selectedMode || "agent") as Mode)
+    setSelectedMode("agent")
   }, [])
 
   useEffect(() => {
@@ -366,11 +434,19 @@ export default function ChatLayout({
     }
   }, [stickyTodos.length, setPanelOpen])
 
+  const pinnedPaths = useMemo(() => new Set(pinnedFilePaths), [pinnedFilePaths])
+
+  function handleTogglePin(path: string) {
+    const next = togglePin(path)
+    setPinnedFilePaths(next)
+  }
+
   const badges = useMemo(() => ({
-    tasks: stickyTodos.length || undefined,
-    history: history.length || undefined,
-    sessions: sessions.length || undefined,
-  } as Partial<Record<RailKey, number | string>>), [stickyTodos.length, history.length, sessions.length])
+    tasks:   stickyTodos.length    || undefined,
+    history: history.length        || undefined,
+    sessions: sessions.length      || undefined,
+    context: (contextFiles.length + pinnedFilePaths.length + smartFiles.length) || undefined,
+  } as Partial<Record<RailKey, number | string>>), [stickyTodos.length, history.length, sessions.length, contextFiles.length, pinnedFilePaths.length, smartFiles.length])
 
   function selectRail(k: RailKey) {
     setActiveRail(k)
@@ -410,9 +486,13 @@ export default function ChatLayout({
         .filter((m) => (m.content || "").trim().length > 0)
         .map((m) => ({ role: m.role, content: m.content || "" }))
 
+      const abortCtrl = new AbortController()
+      abortControllerRef.current = abortCtrl
+
       const response = await fetch(`${BACKEND_URL}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortCtrl.signal,
         body: JSON.stringify({
           messages: historyToSend,
           model: data.model,
@@ -420,6 +500,7 @@ export default function ChatLayout({
           baseUrl: config.baseUrl,
           apiKey: config.apiKey,
           maxOutputTokens: Number(config.maxOutputTokens || 16384),
+          pinnedFiles: pinnedFilePaths,
         }),
       })
 
@@ -744,6 +825,26 @@ export default function ChatLayout({
 
             if (Object.keys(currentToolLoadingStates).length === 0) setRunStatusLabel("Reasoning…")
 
+          } else if (event.type === "context_init") {
+            const ev = event as {
+              type: "context_init"
+              smart_files: Array<{ path: string; chars: number; tokens: number }>
+              pinned_files: Array<{ path: string; chars: number; tokens: number }>
+            }
+            setSmartFiles(ev.smart_files || [])
+            setPinnedFileInfos(ev.pinned_files || [])
+
+          } else if (event.type === "context_update") {
+            const ev = event as {
+              type: "context_update"
+              files: Array<{ path: string; chars: number; tokens: number; action: string }>
+              searched_queries: string[]
+              total_chars: number
+            }
+            setContextFiles(ev.files as ContextFile[])
+            setSearchedQueries(ev.searched_queries || [])
+            setTotalContextChars(ev.total_chars || 0)
+
           } else if (event.type === "agent_phase") {
             setRunStatusLabel(event.label)
           } else if (event.type === "task_status") {
@@ -769,6 +870,11 @@ export default function ChatLayout({
         }
       }
     } catch (err) {
+      // If the user pressed Stop, err is an AbortError — don't show an error message
+      if (err instanceof Error && err.name === "AbortError") {
+        abortControllerRef.current = null
+        return
+      }
       console.error(err)
       setMessages((prev) => {
         const updated = [...prev]
@@ -784,6 +890,8 @@ export default function ChatLayout({
       })
       setIsRunning(false)
       setRunStatusLabel(null)
+    } finally {
+      abortControllerRef.current = null
     }
   }
 
@@ -893,7 +1001,15 @@ export default function ChatLayout({
                   {messages.length === 0 ? (
                     <EmptyState workspace={workspace} onSelect={(p) => setComposerPrefill(p)} />
                   ) : (
-                    messages.map((m, i) => (
+                    messages
+                      .filter((m) => {
+                        if (m.role !== "assistant") return true
+                        const c = (m.content || "").replace(/\[tool call\]/gi, "").trim()
+                        const hasLog = Array.isArray((m as Record<string, unknown>).eventLog) &&
+                          ((m as Record<string, unknown>).eventLog as unknown[]).length > 0
+                        return c.length > 0 || hasLog || !!(m as Record<string, unknown>).streaming
+                      })
+                      .map((m, i) => (
                       <ChatMessage
                         key={i}
                         message={m as unknown as Record<string, unknown>}
@@ -909,6 +1025,7 @@ export default function ChatLayout({
 
               <ChatInput
                 onSend={sendMessage}
+                onStop={stopAgent}
                 disabled={isRunning}
                 runStatusLabel={runStatusLabel}
                 contextUsedTokens={contextUsedTokens}
@@ -924,11 +1041,7 @@ export default function ChatLayout({
                   const config = loadAIConfig()
                   if (config) saveAIConfig({ ...config, selectedModel: m })
                 }}
-                onModeChange={(mode) => {
-                  setSelectedMode(mode)
-                  const config = loadAIConfig()
-                  if (config) saveAIConfig({ ...config, selectedMode: mode })
-                }}
+
                 workspaceFiles={workspaceFiles}
               />
 
@@ -948,7 +1061,7 @@ export default function ChatLayout({
       {/* Right workspace panel */}
       <WorkspacePanel
         open={panelOpen}
-        active={activeRail === "chat" || activeRail === "plan" ? "files" : activeRail}
+        active={activeRail === "chat" ? "files" : activeRail}
         onSelect={(k) => setActiveRail(k)}
         changedPaths={new Set(Array.from(pendingChanges.values()).filter((c) => c.diffStatus === "pending").map((c) => c.path))}
         onClose={() => setPanelOpen(false)}
@@ -967,6 +1080,15 @@ export default function ChatLayout({
         onNewSession={() => { newSession(); setPanelOpen(false) }}
         onDeleteSession={handleDeleteSession}
         onClearSessions={handleClearSessions}
+        contextFiles={contextFiles}
+        searchedQueries={searchedQueries}
+        totalContextChars={totalContextChars}
+        contextMaxTokens={contextMaxTokens}
+        onClearContext={() => { setContextFiles([]); setSearchedQueries([]); setTotalContextChars(0) }}
+        pinnedFiles={pinnedFileInfos}
+        pinnedPaths={pinnedPaths}
+        onTogglePin={handleTogglePin}
+        smartFiles={smartFiles}
         onOpenFile={openFileTab}
       />
     </div>

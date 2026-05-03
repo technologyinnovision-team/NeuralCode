@@ -2,11 +2,71 @@
 # PyInstaller spec — onedir mode (no temp-extraction, more reliable)
 
 import sys
+import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 block_cipher = None
 
-# Collect pywinpty binaries and data (includes winpty.dll and the .pyd extension)
+# ── Python DLL (Windows) ───────────────────────────────────────────────────────
+# Python 3.12+ requires the versioned DLL (python3XX.dll) to be explicitly
+# included in the bundle. Without it the bootloader fails immediately with:
+#   "Failed to load Python DLL ... python3XX.dll. LoadLibrary: The specified
+#    module could not be found."
+#
+# We search every plausible Windows location because the DLL can be:
+#   - Next to python.exe in a normal install  (C:\Python314\python314.dll)
+#   - In sys.base_prefix for venv users       (C:\Python314\python314.dll)
+#   - In the Windows system dirs for some installers
+#   - Anywhere on PATH (Microsoft Store, conda, etc.)
+# --
+def _find_python_dll():
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    dll_name = f'python{major}{minor}.dll'
+
+    search_dirs = []
+
+    # 1. Same directory as the running python.exe
+    if sys.executable:
+        search_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+
+    # 2. Base prefix — resolves correctly even inside a venv
+    if hasattr(sys, 'base_prefix') and sys.base_prefix:
+        search_dirs.append(sys.base_prefix)
+
+    # 3. Real prefix (set by virtualenv, not venv)
+    if hasattr(sys, 'real_prefix') and sys.real_prefix:
+        search_dirs.append(sys.real_prefix)
+
+    # 4. Windows system directories
+    windir = os.environ.get('WINDIR', r'C:\Windows')
+    search_dirs.append(os.path.join(windir, 'System32'))
+    search_dirs.append(os.path.join(windir, 'SysWOW64'))
+
+    # 5. Every directory on PATH
+    for p in os.environ.get('PATH', '').split(os.pathsep):
+        if p:
+            search_dirs.append(p)
+
+    seen = set()
+    for d in search_dirs:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        candidate = os.path.join(d, dll_name)
+        if os.path.isfile(candidate):
+            print(f'[spec] Bundling {dll_name} from: {candidate}')
+            return candidate
+
+    print(f'[spec] WARNING: {dll_name} not found — bundle may fail at runtime.')
+    print(f'[spec] Searched: {list(seen)}')
+    return None
+
+
+_python_dll_path = _find_python_dll()
+_python_dll_binaries = [(_python_dll_path, '.')] if _python_dll_path else []
+
+# ── pywinpty ──────────────────────────────────────────────────────────────────
 winpty_binaries = []
 winpty_datas = []
 winpty_hiddenimports = []
@@ -21,9 +81,9 @@ except Exception:
 a = Analysis(
     ['server.py'],
     pathex=['.'],
-    binaries=winpty_binaries,
+    binaries=_python_dll_binaries + winpty_binaries,
     datas=[
-        # rules/ contains Markdown files — must be explicit data assets
+        # rules/ contains Markdown instruction files — must be explicit data assets
         ('rules', 'rules'),
     ] + winpty_datas,
     hiddenimports=[
@@ -82,6 +142,7 @@ a = Analysis(
         'tools.registry',
         'tools.edit_file',
         'tools.patch_file',
+        'tools.rename_file',
         'context_manager',
         'workspace',
         'config',
@@ -98,7 +159,8 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# onedir mode: exe + _internal/ folder — no temp extraction, no AV issues
+# onedir mode — exe lives at dist/server/server.exe
+#               DLLs and modules live at dist/server/_internal/
 exe = EXE(
     pyz,
     a.scripts,

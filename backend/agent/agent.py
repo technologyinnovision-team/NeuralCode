@@ -2,9 +2,12 @@
 NeuralCode Agent — autonomous, multi-tool execution loop.
 
 Design principles:
-- Explicit planning phases emitted to the frontend (analyzing → planning → executing → done).
-- Processes all tool blocks found in each model turn sequentially.
-- Retries failed tool calls up to MAX_TOOL_RETRIES times.
+- Explicit planning phases emitted to the frontend.
+- One tool per model turn; result fed back before the next turn.
+- Retries on failed tool calls (up to MAX_TOOL_RETRIES).
+- Session file context: every file read, patched, or created is cached and
+  re-injected into every subsequent tool-result message so the model always
+  has full context without re-reading.
 - Smart context trimming preserves the system prompt and recent history.
 - Completion only when COMPLETION_MARKER is present and no pending tools remain.
 """
@@ -25,26 +28,75 @@ TAG_TO_TOOL: Dict[str, str] = {
     "Call_Tool_List_Files": "list_files",
     "read_content_file":    "read_file",
     "search_in_files":      "search_files",
+    "patch_file":           "patch_file",
+    "rename_file":          "rename_file",
     "lines_editor":         "lines_editor",
     "create_file":          "write_file",
     "run_command":          "run_command",
 }
 
-OPEN_TAG_RE = re.compile(r"<([A-Za-z_][\w\-]*)\s*([^>]*)>")
+# Robust tag-opener: handles > and newlines inside quoted attribute values.
+# Pattern: <TagName (attr="value with > or \n inside")* />? >
+OPEN_TAG_RE = re.compile(
+    r'<([A-Za-z_][\w\-]*)'
+    r'((?:\s+[A-Za-z_][\w\-]*\s*=\s*(?:"[^"]*"|\'[^\']*\'))*)'
+    r'\s*/?>'
+    , re.DOTALL
+)
 ATTR_RE = re.compile(
     r'([A-Za-z_][\w\-]*)\s*=\s*"([^"]*)"|([A-Za-z_][\w\-]*)\s*=\s*\'([^\']*)\''
+    , re.DOTALL  # allow newlines inside attribute values
 )
 
-MAX_RESULT_TEXT  = 12000
-MAX_MESSAGES     = 40
-MAX_STEPS        = 80
-MAX_TOOL_RETRIES = 2
-MAX_DUPLICATE_CALLS = 1   # block after 2 identical calls (was 3)
-COMPLETION_MARKER = "task_status=completed"
+MAX_RESULT_TEXT           = 12000
+MAX_MESSAGES              = 40
+MAX_STEPS                 = 80
+MAX_TOOL_RETRIES          = 2
+MAX_DUPLICATE_CALLS       = 1
+MAX_TAG_RECOVERY_ATTEMPTS = 2       # retries when a tool tag is malformed
+COMPLETION_MARKER         = "task_status=completed"
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
+
+# Max characters of a single cached file included in the session context block
+SESSION_FILE_PREVIEW = 6000
+
+# Injected when a tool tag was detected in the model output but failed to parse
+_MALFORMED_TAG_RECOVERY_MSG = """\
+Your last tool tag was malformed — the parser could not extract it. This means no \
+tool was executed.
+
+**Root cause:** `<{tag}>` attributes almost certainly contain `>`, `<`, newlines, \
+HTML, JSX, TypeScript generics (`Array<T>`), or multi-line replacement text — all of \
+which corrupt XML attribute parsing.
+
+**Immediate fix — switch to `<lines_editor>`:**
+1. Read the exact line numbers first:
+   `<read_content_file path="..." from_lines="N" to_lines="M"></read_content_file>`
+2. Then replace using the JSON body (safe for ALL characters — `>`, `<`, HTML, JSX, newlines):
+```
+<lines_editor path="same/file">
+[{{"op": "replace", "start_line": N, "end_line": M, "content": "exact replacement\\n"}}]
+</lines_editor>
+```
+
+Do NOT retry `<patch_file>` for this content. Emit `<read_content_file>` now to get \
+line numbers, then use `<lines_editor>`.\
+"""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _detect_malformed_attempt(text: str) -> str | None:
+    """
+    Check if the model output contains a tool tag opening that failed to parse.
+    This happens when a tag's attributes contain > < newlines or other XML-breaking
+    characters. Returns the offending tag name, or None if no attempt is detected.
+    """
+    for tag_name in TAG_TO_TOOL:
+        if f"<{tag_name}" in text:
+            return tag_name
+    return None
+
 
 def _parse_attributes(raw: str) -> Dict[str, str]:
     attrs: Dict[str, str] = {}
@@ -97,7 +149,51 @@ def _strip_tool_tags(text: str) -> str:
         r"<([A-Za-z_][\w\-]*)\s*[^>]*>.*?</\1>", "", text, flags=re.DOTALL
     )
     cleaned = re.sub(r"<([A-Za-z_][\w\-]*)\s*[^>]*/>", "", cleaned)
-    return cleaned.strip()
+    # Also strip the completion marker so it doesn't pollute conversation history
+    cleaned = cleaned.replace(COMPLETION_MARKER, "").strip()
+    return cleaned
+
+
+# ── Session file context ───────────────────────────────────────────────────────
+
+def _build_session_context(
+    file_cache: Dict[str, str],
+    edited_files: set,
+    created_files: set,
+    searched_queries: List[str],
+) -> str:
+    """
+    Build the session context block injected into every tool-result message.
+    Includes the current content of every file the agent has touched this session.
+    """
+    lines: List[str] = []
+
+    if file_cache:
+        lines.append("## SESSION FILE CONTEXT")
+        lines.append("The following files have been accessed or modified this session.")
+        lines.append("Use this content directly — do NOT re-read these files.\n")
+        for path, content in file_cache.items():
+            if path in created_files:
+                status = "CREATED"
+            elif path in edited_files:
+                status = "MODIFIED"
+            else:
+                status = "READ"
+            truncated = (
+                content[:SESSION_FILE_PREVIEW] + f"\n…[{len(content) - SESSION_FILE_PREVIEW} chars truncated]"
+                if len(content) > SESSION_FILE_PREVIEW
+                else content
+            )
+            lines.append(f"### [{status}] `{path}`")
+            lines.append(f"```\n{truncated}\n```\n")
+
+    if searched_queries:
+        recent = searched_queries[-8:]
+        quoted = ", ".join('"' + q + '"' for q in recent)
+        lines.append(f"## Searched this session: {quoted}")
+        lines.append("Do NOT repeat any of these searches.\n")
+
+    return "\n".join(lines)
 
 
 # ── Block extraction ──────────────────────────────────────────────────────────
@@ -119,7 +215,7 @@ def _extract_closed_blocks(text: str) -> List[Dict]:
         close_tag = f"</{tag_name}>"
         close_idx = text.find(close_tag, open_m.end())
 
-        if is_self_closing and tag_name in ("create_file", "lines_editor"):
+        if is_self_closing and tag_name in ("create_file", "lines_editor", "patch_file"):
             cursor = open_m.end()
             continue
 
@@ -189,6 +285,27 @@ async def _execute_tagged_tool(block: Dict) -> Dict:
             "total_lines": len(lines),
         }
 
+    # patch_file — surgical search-and-replace
+    if tag_name == "patch_file":
+        path = attrs.get("path", "").strip()
+        if not path:
+            return {"error": "Missing required attribute: path"}
+        search_text  = attrs.get("search", "")
+        replace_text = attrs.get("replace", "")
+        if not search_text:
+            return {"error": "Missing required attribute: search"}
+        return await fn(path=path, search=search_text, replace=replace_text)
+
+    # rename_file — move or rename a file within the workspace
+    if tag_name == "rename_file":
+        path = attrs.get("path", "").strip()
+        new_path = attrs.get("new_path", "").strip()
+        if not path:
+            return {"error": "Missing required attribute: path"}
+        if not new_path:
+            return {"error": "Missing required attribute: new_path"}
+        return await fn(path=path, new_path=new_path)
+
     # lines_editor — line-based surgical edits
     if tag_name == "lines_editor":
         path = attrs.get("path", "").strip()
@@ -246,7 +363,13 @@ def _phase_event(phase: str, label: str) -> Dict:
 
 # ── Main agent loop ───────────────────────────────────────────────────────────
 
-async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent", max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS):
+async def run_agent(
+    client,
+    model: str,
+    messages: List[Dict],
+    mode: str = "agent",
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+):
     """
     Autonomous agentic execution loop with explicit planning phases.
     Streams events to the caller (FastAPI SSE layer).
@@ -256,13 +379,17 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
     yield _phase_event("analyzing", "Analyzing task…")
 
     seen_calls: Dict[str, int] = {}
-    read_files: set = set()          # files already read this session
-    edited_files: set = set()        # files already edited this session
+    recovery_attempts: int     = 0     # malformed tag auto-recovery counter
+
+    # Session tracking — for full file context injection
+    file_cache: Dict[str, str]  = {}   # path → current content (read or created)
+    edited_files: set            = set()
+    created_files: set           = set()
+    searched_queries: List[str]  = []
 
     for step in range(MAX_STEPS):
         messages = _trim_messages(messages)
 
-        # Emit planning phase before each model call (after step 0)
         if step > 0:
             yield _phase_event("planning", "Planning next move…")
 
@@ -283,7 +410,6 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
                 yield {"type": "content", "content": "\n[context trimmed — token limit]\n"}
                 continue
             if "max_tokens" in err.lower() or "maximum" in err.lower():
-                # Model doesn't support this max_tokens value; retry without it
                 try:
                     response = await client.chat.completions.create(
                         model=model,
@@ -336,6 +462,12 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
                         "opening_tag":  open_m.group(0),
                     }
         except APIError as e:
+            # Close every announced-but-unexecuted tool card so they don't stay "running"
+            for bid in announced_blocks.values():
+                yield {
+                    "type": "tool_result", "tool_call_id": bid,
+                    "result": {"error": "Stream interrupted — tool was not executed.", "success": False},
+                }
             messages.append({
                 "role":    "user",
                 "content": (
@@ -343,23 +475,31 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
                     "Do NOT use native function-calling. Continue the task."
                 ),
             })
-            yield {"type": "content", "content": f"\n[stream recovered: {e}]\n"}
+            yield {"type": "content", "content": f"\n[stream recovered]\n"}
             continue
         except Exception as e:
+            for bid in announced_blocks.values():
+                yield {
+                    "type": "tool_result", "tool_call_id": bid,
+                    "result": {"error": f"Stream error: {e}", "success": False},
+                }
             yield {"type": "final", "content": f"[Agent stream error] {e}"}
             return
 
-        # Handle output token limit cutoff — model stopped mid-generation
+        # Handle output token limit cutoff
         if finish_reason == "length":
-            messages.append({
-                "role":    "assistant",
-                "content": full_content or "[truncated]",
-            })
+            # Close announced blocks — they can't execute in this truncated turn
+            for bid in announced_blocks.values():
+                yield {
+                    "type": "tool_result", "tool_call_id": bid,
+                    "result": {"error": "Response was cut off — tool not executed.", "success": False},
+                }
+            messages.append({"role": "assistant", "content": full_content or "[truncated]"})
             messages.append({
                 "role":    "user",
                 "content": (
-                    "Your previous response was cut off because it hit the output token limit. "
-                    "Please continue exactly from where you left off without repeating content. "
+                    "Your previous response was cut off at the output token limit. "
+                    "Continue exactly from where you left off without repeating any content. "
                     "If you were writing file content inside a tool tag, resume the content and close the tag properly."
                 ),
             })
@@ -373,11 +513,25 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
 
         blocks = _extract_closed_blocks(full_content)
 
-        # Store assistant turn as TEXT ONLY (strip tool tags so history stays clean)
+        # ── Close orphaned tool announcements ─────────────────────────────────
+        # Every tool_block_start must have a matching tool_result.
+        # Only blocks[0] will be executed; close out every other announced block.
+        executed_start = blocks[0]["start"] if blocks else None
+        for pos, bid in announced_blocks.items():
+            if pos == executed_start:
+                continue  # this one will get a real tool_result below
+            result = (
+                {"info": "Skipped — only the first tool per response is executed."}
+                if executed_start is not None
+                else {"error": "Tool tag was incomplete or malformed.", "success": False}
+            )
+            yield {"type": "tool_result", "tool_call_id": bid, "result": result}
+
+        # Store assistant turn as text only (strip tool tags so history stays clean)
         assistant_text = _strip_tool_tags(full_content).strip()
         messages.append({
             "role":    "assistant",
-            "content": assistant_text or "[tool call]",
+            "content": assistant_text or "\u00b7",
         })
 
         # No tool blocks this turn
@@ -391,8 +545,29 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
                 yield {"type": "final", "content": stripped or full_content}
                 return
 
-            # Signals that strongly indicate active/in-progress coding work —
-            # only when these are absent do we consider the response "done".
+            # ── Malformed tag auto-recovery ───────────────────────────────
+            # If the response contained a tool tag opening (<patch_file etc.)
+            # but nothing parsed, the tag was almost certainly malformed
+            # (attributes with > < or newlines). Inject a targeted correction
+            # and let the model retry — up to MAX_TAG_RECOVERY_ATTEMPTS times.
+            malformed_tag = _detect_malformed_attempt(full_content)
+            if malformed_tag and recovery_attempts < MAX_TAG_RECOVERY_ATTEMPTS:
+                recovery_attempts += 1
+                yield _phase_event(
+                    "recovering",
+                    f"Malformed <{malformed_tag}> — retrying with lines_editor… ({recovery_attempts}/{MAX_TAG_RECOVERY_ATTEMPTS})",
+                )
+                recovery_note = (
+                    f"\n\n⚠️ `<{malformed_tag}>` tag was malformed and could not execute "
+                    f"(attempt {recovery_attempts}). Switching to `<lines_editor>`…\n\n"
+                )
+                yield {"type": "content", "content": recovery_note}
+                messages.append({
+                    "role":    "user",
+                    "content": _MALFORMED_TAG_RECOVERY_MSG.format(tag=malformed_tag),
+                })
+                continue
+
             ACTIVE_WORK_SIGNALS = (
                 "root cause", "target files", "phase 1", "phase 2",
                 "will search", "will read", "will edit", "will run",
@@ -402,8 +577,6 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
             )
             has_active_work_signal = any(s in lower for s in ACTIVE_WORK_SIGNALS)
 
-            # Conversational / self-contained phrases that indicate the response
-            # is complete and needs no further tool use.
             DONE_SIGNALS = (
                 "please clarify", "could you", "do you want", "which", "what type",
                 "how can i help", "how may i help", "what would you like",
@@ -416,19 +589,14 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
             )
             has_done_signal = any(s in lower for s in DONE_SIGNALS)
 
-            # A response that has a `?` or a known done-signal, and doesn't
-            # show any active-work signal, is treated as complete.
             is_self_contained = (
                 ("?" in full_content or has_done_signal)
                 and not has_active_work_signal
             )
-
-            # A very short response with no active-work signals is almost
-            # certainly a greeting, clarification, or simple acknowledgement.
             is_short_non_task = (
                 len(stripped.split()) <= 80
                 and not has_active_work_signal
-                and step == 0  # only on the first turn (before any tools ran)
+                and step == 0
             )
 
             if is_self_contained or is_short_non_task:
@@ -445,14 +613,13 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
             })
             continue
 
-        # ── Execute ONLY the first tool block (one tool per turn) ──────────
+        # ── Execute the first tool block (one tool per turn) ───────────────
         yield _phase_event("executing", "Executing tool…")
 
         block = blocks[0]
         block["id"] = announced_blocks.get(block["start"], str(uuid.uuid4()))
 
-        # Build a key that ignores line-range attributes so reading the same
-        # file at different offsets still counts as a duplicate.
+        # Duplicate-call guard (ignores line-range attributes)
         attrs_for_key = {k: v for k, v in block["attributes"].items()
                          if k not in ("from_lines", "to_lines")}
         call_key = (
@@ -465,13 +632,19 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
             yield {
                 "type":         "tool_result",
                 "tool_call_id": block["id"],
-                "result": {"error": f"Duplicate call blocked — <{block['tag_name']}> with the same target was already called {seen_calls[call_key] - 1} time(s). Move to the next step."},
+                "result": {
+                    "error": (
+                        f"Duplicate call blocked — <{block['tag_name']}> with the same target "
+                        f"was already called {seen_calls[call_key] - 1} time(s). Move to the next step."
+                    )
+                },
             }
             messages.append({
                 "role":    "user",
                 "content": (
-                    f"Blocked: you already called <{block['tag_name']}> with the same arguments. "
-                    "Do NOT repeat it. Move to the next step or end with:\n"
+                    f"Blocked: you already called <{block['tag_name']}> with identical arguments. "
+                    "Do NOT repeat it. Refer to SESSION FILE CONTEXT for cached file contents. "
+                    "Move to the next step or end with:\n"
                     f"  {COMPLETION_MARKER}"
                 ),
             })
@@ -497,34 +670,98 @@ async def run_agent(client, model: str, messages: List[Dict], mode: str = "agent
 
         result, success = await _execute_with_retry(block)
 
-        # Track which files have been read / edited this session
+        # Successful tool execution — reset malformed-tag recovery counter so
+        # each distinct step gets fresh recovery attempts.
+        if success:
+            recovery_attempts = 0
+
+        # ── Update session file cache ──────────────────────────────────────
         file_path_used = block["attributes"].get("path", "")
+
         if block["tag_name"] == "read_content_file" and file_path_used:
-            read_files.add(file_path_used)
-        elif block["tag_name"] in ("lines_editor", "create_file") and file_path_used:
+            content_val = result.get("content", "")
+            if content_val:
+                file_cache[file_path_used] = content_val
+
+        elif block["tag_name"] == "patch_file" and file_path_used and result.get("success"):
             edited_files.add(file_path_used)
+            # Refresh cache: read the patched file's new content via workspace
+            try:
+                refreshed = workspace_read_file(file_path_used)
+                if isinstance(refreshed, dict):
+                    refreshed = refreshed.get("content", "")
+                if refreshed:
+                    file_cache[file_path_used] = refreshed
+            except Exception:
+                file_cache.pop(file_path_used, None)
+
+        elif block["tag_name"] == "lines_editor" and file_path_used:
+            edited_files.add(file_path_used)
+            # Refresh cache after edit
+            try:
+                refreshed = workspace_read_file(file_path_used)
+                if isinstance(refreshed, dict):
+                    refreshed = refreshed.get("content", "")
+                if refreshed:
+                    file_cache[file_path_used] = refreshed
+            except Exception:
+                file_cache.pop(file_path_used, None)
+
+        elif block["tag_name"] == "create_file" and file_path_used:
+            created_files.add(file_path_used)
+            file_cache[file_path_used] = block["payload"]
+
+        elif block["tag_name"] == "rename_file" and result.get("success"):
+            old_path = block["attributes"].get("path", "")
+            new_path_val = block["attributes"].get("new_path", "")
+            # Move cached content to the new path, drop the old entry
+            if old_path in file_cache:
+                file_cache[new_path_val] = file_cache.pop(old_path)
+            edited_files.discard(old_path)
+            edited_files.add(new_path_val)
+
+        elif block["tag_name"] == "search_in_files":
+            query_used = block["attributes"].get("query", "").strip()
+            if query_used and query_used not in searched_queries:
+                searched_queries.append(query_used)
+
+        # Emit live context state so the frontend panel stays up to date
+        yield {
+            "type": "context_update",
+            "files": [
+                {
+                    "path": p,
+                    "chars": len(c),
+                    "tokens": max(1, len(c) // 4),
+                    "action": (
+                        "created" if p in created_files
+                        else "edited" if p in edited_files
+                        else "read"
+                    ),
+                }
+                for p, c in file_cache.items()
+            ],
+            "searched_queries": list(searched_queries),
+            "total_chars": sum(len(c) for c in file_cache.values()),
+        }
 
         yield {"type": "tool_result", "tool_call_id": block["id"], "result": result}
 
         compact = _compact_result(result)
         status_note = "" if success else " [FAILED — fix and retry with corrected arguments]"
 
-        # Build a context hint so the model doesn't re-read files it has seen
-        context_lines = []
-        if read_files:
-            context_lines.append(f"Already read (do NOT read again): {', '.join(sorted(read_files))}")
-        if edited_files:
-            context_lines.append(f"Already edited: {', '.join(sorted(edited_files))}")
-        context_hint = ("\n" + "\n".join(context_lines)) if context_lines else ""
+        # Build the session context block (full file contents + search history)
+        session_ctx = _build_session_context(file_cache, edited_files, created_files, searched_queries)
 
         messages.append({
             "role":    "user",
             "content": (
                 f"<tool_result tag=\"{block['tag_name']}\" path=\"{file_path_used}\"{status_note}>\n"
                 f"{json.dumps(compact)}\n"
-                f"</tool_result>{context_hint}\n\n"
+                f"</tool_result>\n\n"
+                f"{session_ctx}\n\n"
                 "State your NEXT action in one sentence, then use exactly ONE tool tag. "
-                "Do NOT re-read or re-search anything already listed above. "
+                "Do NOT re-read or re-search anything already in SESSION FILE CONTEXT above. "
                 f"When all work is done, end with:\n  {COMPLETION_MARKER}"
             ),
         })

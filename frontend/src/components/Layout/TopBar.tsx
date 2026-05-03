@@ -24,8 +24,9 @@ export default function TopBar({
   onToggleLeftRail,
 }: Props) {
   return (
-    <header className="h-14 px-3 sm:px-4 flex items-center justify-between border-b border-[color:var(--border)] backdrop-blur supports-[backdrop-filter]:bg-black/30 bg-black/20 z-30">
+    <header className="h-14 px-3 sm:px-4 flex items-center justify-between border-b border-[color:var(--border)] backdrop-blur-xl supports-[backdrop-filter]:bg-black/40 bg-black/25 z-30 shrink-0">
       <div className="flex items-center gap-2 min-w-0">
+        {/* Mobile menu */}
         <button
           onClick={onToggleLeftRail}
           className="nc-icon-btn md:hidden"
@@ -35,27 +36,32 @@ export default function TopBar({
           <Menu size={18} />
         </button>
 
+        {/* Brand */}
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="relative h-9 w-9 rounded-2xl bg-gradient-to-br from-[#7c5cff] to-[#22d3ee] flex items-center justify-center shadow-[0_0_24px_rgba(124,92,255,0.45)]">
-            <Sparkles size={16} className="text-white" />
+          <div className="relative h-9 w-9 rounded-[14px] bg-gradient-to-br from-[#7c5cff] via-[#6247f5] to-[#22d3ee] flex items-center justify-center nc-logo-glow shrink-0">
+            <Sparkles size={15} className="text-white drop-shadow" />
           </div>
           <div className="leading-tight min-w-0">
-            <div className="text-sm font-semibold tracking-tight truncate">NeuralCode</div>
-            <div className="hidden sm:block text-[11px] text-[color:var(--muted-foreground)] -mt-0.5">
-              Workspace engineer
+            <div className="text-sm font-bold tracking-tight truncate nc-gradient-text-warm">
+              NeuralCode
+            </div>
+            <div className="hidden sm:block text-[10px] text-[color:var(--faint-foreground)] -mt-0.5 font-medium tracking-wide uppercase">
+              Workspace AI
             </div>
           </div>
         </div>
 
+        {/* Workspace pill */}
         {workspace && (
-          <div className="hidden md:flex items-center ml-2 gap-1.5 nc-chip">
-            <FolderOpen size={12} />
-            <span className="font-medium text-[color:var(--foreground)] truncate max-w-[160px]">{workspace}</span>
+          <div className="hidden md:flex items-center ml-2 gap-1.5 px-2.5 py-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface)]/60 backdrop-blur-sm text-[11px] text-[color:var(--muted-foreground)] max-w-[200px]">
+            <FolderOpen size={11} className="text-[color:var(--accent-2)] shrink-0" />
+            <span className="font-medium text-[color:var(--foreground)] truncate">{workspace}</span>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5">
+      {/* Actions */}
+      <div className="flex items-center gap-1">
         <button
           onClick={onOpenWorkspace}
           disabled={!!loadingWorkspace}
@@ -85,14 +91,14 @@ export default function TopBar({
           <Settings size={16} />
         </button>
 
-        <div className="w-px h-6 bg-[color:var(--border)] mx-1 hidden sm:block" />
+        <div className="w-px h-5 bg-[color:var(--border-strong)] mx-1 hidden sm:block rounded-full" />
 
         <button
           onClick={onTogglePanel}
           className="nc-icon-btn"
           aria-pressed={panelOpen}
           aria-label="Toggle workspace panel"
-          title={panelOpen ? "Hide workspace panel" : "Show workspace panel"}
+          title={panelOpen ? "Hide panel" : "Show panel"}
         >
           {panelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>

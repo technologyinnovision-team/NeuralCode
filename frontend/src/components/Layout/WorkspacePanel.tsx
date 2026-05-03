@@ -1,10 +1,11 @@
 import { type ReactNode } from "react"
-import { ListTodo, History, X, FolderOpen, Clock } from "lucide-react"
+import { ListTodo, History, X, FolderOpen, Clock, Brain } from "lucide-react"
 import type { RailKey } from "./LeftRail"
 import TodosPanel from "../Plan/TodosPanel"
 import ToolsHistoryPanel, { type ToolHistoryItem } from "../Plan/ToolsHistoryPanel"
 import FileExplorerPanel from "../Plan/FileExplorerPanel"
 import ChatSessionList from "../Chat/ChatSessionList"
+import ContextPanel, { type ContextFile, type SmartFile, type PinnedFile } from "../Plan/ContextPanel"
 import type { ChatSession } from "../../utils/chatHistory"
 
 type Props = {
@@ -29,14 +30,26 @@ type Props = {
   onDeleteSession: (id: string) => void
   onClearSessions: () => void
 
+  contextFiles: ContextFile[]
+  searchedQueries: string[]
+  totalContextChars: number
+  contextMaxTokens: number
+  onClearContext: () => void
+
+  pinnedFiles: PinnedFile[]
+  pinnedPaths: Set<string>
+  onTogglePin: (path: string) => void
+  smartFiles: SmartFile[]
+
   onOpenFile?: (path: string, content: string) => void
 }
 
-const tabs: { key: Exclude<RailKey, "chat" | "plan">; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
-  { key: "sessions", label: "History", icon: Clock },
-  { key: "files", label: "Explorer", icon: FolderOpen },
-  { key: "tasks", label: "Tasks", icon: ListTodo },
-  { key: "history", label: "Tools", icon: History },
+const tabs: { key: Exclude<RailKey, "chat">; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { key: "sessions", label: "History",  icon: Clock },
+  { key: "files",    label: "Explorer", icon: FolderOpen },
+  { key: "tasks",    label: "Tasks",    icon: ListTodo },
+  { key: "history",  label: "Tools",    icon: History },
+  { key: "context",  label: "Context",  icon: Brain },
 ]
 
 export default function WorkspacePanel({
@@ -56,10 +69,19 @@ export default function WorkspacePanel({
   onNewSession,
   onDeleteSession,
   onClearSessions,
+  contextFiles,
+  searchedQueries,
+  totalContextChars,
+  contextMaxTokens,
+  onClearContext,
+  pinnedFiles,
+  pinnedPaths,
+  onTogglePin,
+  smartFiles,
   onOpenFile,
 }: Props) {
-  const tab: Exclude<RailKey, "chat" | "plan"> =
-    active === "chat" || active === "plan" ? "files" : (active as Exclude<RailKey, "chat" | "plan">)
+  const tab: Exclude<RailKey, "chat"> =
+    active === "chat" ? "files" : (active as Exclude<RailKey, "chat">)
 
   if (!open) return null
 
@@ -105,13 +127,30 @@ export default function WorkspacePanel({
           />
         </Section>
         <Section visible={tab === "files"}>
-          <FileExplorerPanel changedPaths={changedPaths} onOpenFile={onOpenFile} />
+          <FileExplorerPanel
+            changedPaths={changedPaths}
+            pinnedPaths={pinnedPaths}
+            onTogglePin={onTogglePin}
+            onOpenFile={onOpenFile}
+          />
         </Section>
         <Section visible={tab === "tasks"}>
           <TodosPanel items={todos} onToggle={onToggleTodo} onClear={onClearTodos} />
         </Section>
         <Section visible={tab === "history"}>
           <ToolsHistoryPanel items={history} onClear={onClearHistory} />
+        </Section>
+        <Section visible={tab === "context"}>
+          <ContextPanel
+            files={contextFiles}
+            searchedQueries={searchedQueries}
+            totalChars={totalContextChars}
+            contextMaxTokens={contextMaxTokens}
+            onClear={onClearContext}
+            pinnedFiles={pinnedFiles}
+            onUnpinFile={(path) => onTogglePin(path)}
+            smartFiles={smartFiles}
+          />
         </Section>
       </div>
     </aside>

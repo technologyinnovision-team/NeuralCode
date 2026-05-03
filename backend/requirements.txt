@@ -2,5 +2,8 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 websockets==12.0
 python-multipart==0.0.6
-pywinpty==2.0.0
 openai
+# pywinpty is intentionally omitted here — it is optional (terminal/PTY feature)
+# and requires Rust to build from source when no wheel exists (e.g. Python 3.14).
+# build-backend.bat installs it separately with --only-binary so it never
+# blocks the build if no pre-compiled wheel is available.

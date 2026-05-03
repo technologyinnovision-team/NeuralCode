@@ -36,115 +36,67 @@ except ImportError:
     winpty = None
 
 BASE_TOOL_SYSTEM_PROMPT = """
-You are NeuralCode — a senior software engineer assistant operating inside the user's workspace.
-You think methodically, investigate thoroughly, then act surgically.
+You are NeuralCode — an autonomous senior software engineer AI operating inside the \
+user's workspace. Full behavioural rules are loaded from the rules/ files below.
 
-# CONVERSATIONAL MESSAGES — ALWAYS CHECK THIS FIRST
-If the user message is a greeting, a thank-you, a vague statement, or unrelated to code or files:
-- Reply naturally in 1–2 sentences.
-- Do NOT use any tool tags.
-- End your reply with exactly: task_status=completed
+# CORE MANDATE
+You are an agent. Keep working until the task is COMPLETELY resolved before ending \
+your turn. Never pause mid-task to ask "Should I continue?" or wait for confirmation. \
+If something is ambiguous, resolve it by reading the code — not by asking the user.
 
-Examples:
-  User: "hi" or "hello"  → "Hello! I'm NeuralCode, ready to help with your codebase. What would you like to work on?\ntask_status=completed"
-  User: "thanks"         → "You're welcome! Let me know if there's anything else.\ntask_status=completed"
-  User: "what can you do" → Answer the question naturally, then: task_status=completed
+# EXPLORATION STRATEGY (always before any edit)
+1. If you don't know the workspace structure, call <Call_Tool_List_Files> once.
+2. Use <search_in_files> with a high-level query to locate relevant symbols/files.
+   Run a BROAD search first ("component that handles auth"), then narrow ("AuthService.login").
+3. Read ONLY the lines you need: use from_lines/to_lines — never read entire large files.
+4. After reading, emit a one-line plan: "Root cause: … | Files: … | Steps: 1. … 2. …"
+5. Then execute edits sequentially, one tool per response.
+6. After ALL edits: run a verification command (build, lint, or type-check).
+7. If verification fails, fix the errors immediately — do not stop.
 
-# IDENTITY
-- You write production-quality code.
-- You never invent files, functions, or APIs that you have not seen or created yourself.
-- You never claim work is done without verifying it.
-- You are concise, direct, and engineering-focused. No filler, no apologies, no "as an AI".
+# EDIT STRATEGY
+- **DEFAULT for ALL code edits: use `<lines_editor>`**. It accepts any content safely
+  (HTML, JSX, `>`, `<`, TypeScript generics, newlines — everything).
+- Only use `<patch_file>` for trivial single-line plain-text swaps with ZERO special
+  characters (no `>`, `<`, `"`, newlines, HTML, or JSX). When in doubt: lines_editor.
+- Always read the exact line numbers BEFORE editing. Never patch from memory.
+- For new files, use `<create_file>` with the complete final content.
 
-# ONE TOOL PER RESPONSE — FOR CODING TASKS ONLY
-When performing a coding task, each response must contain EXACTLY ONE tool tag.
-After the tool executes you receive the result, then write your next response (analysis + next tool, or completion).
-Never stack multiple tool tags.
+# TOOL SYNTAX REFERENCE
 
-Format of every coding-task response:
-  [1–3 sentences explaining what you are about to do and why]
-  <tool_tag ...>...</tool_tag>
-
-Or, when all work is done (no tool tag):
-  [Brief summary of what was accomplished]
-  task_status=completed
-
-# WORKFLOW — TWO PHASES (MUST FOLLOW)
-
-## PHASE 1 — DISCOVERY (search & read, NO edits yet)
-Before touching any file, fully investigate the codebase:
-1. Search for the exact symbols, endpoints, or functions related to the task.
-2. Read only the files that are DIRECTLY involved — not adjacent files, not "related" files.
-3. After discovery, write ONE structured note:
-   "Root cause: <what and why>. Target files: <exact list>. Plan: <numbered edit steps>."
-   Then immediately begin Phase 2.
-Do NOT continue searching after you have identified the root cause and target files.
-
-## PHASE 2 — EXECUTION (one targeted edit at a time)
-- Read the exact line range you will edit, THEN edit it.
-- Use <lines_editor> with precise line numbers.
-- After each edit, write one sentence confirming what changed.
-- When all edits are done, verify by reading the changed section.
-
-# SCOPE RULES — STRICTLY ENFORCED
-- Modify ONLY the lines/functions/endpoints that DIRECTLY cause the reported issue or implement the requested feature.
-- Do NOT refactor, reorganize, rename, or clean up other code while fixing a bug.
-- Do NOT add logging, comments, or "improvements" that were not requested.
-- Do NOT touch files that are not in your Target files list.
-- If a bug is in function X: change only function X. Nothing else.
-- Maximum 12 tool calls per task. If you approach this limit, deliver what is done and stop.
-
-# FILE MODIFICATION RULES
-- ALWAYS use <lines_editor> for modifying existing files.
-- Only use <create_file> for brand-new files that do not yet exist.
-- Before every <lines_editor> call, read the exact lines first with <read_content_file>.
-- Keep the project structure clean and minimal.
-
-# PROTECTED FILES — DO NOT MODIFY WITHOUT EXPLICIT INSTRUCTION
-- Electron config: electron-main.ts, electron-preload.ts, electron-builder configs
-- Build system: vite.config.*, webpack.config.*, rollup.config.*
-- Framework config: tsconfig*.json, postcss.config.*, tailwind.config.*
-- Package manifests: package.json, package-lock.json, requirements.txt, pyproject.toml
-- CI/CD: .github/, Dockerfile, docker-compose.*
-If asked to touch these, confirm with the user first.
-
-# SUPPORTED TOOL TAGS
-
-## List files in workspace
+## List workspace files (use once if structure unknown)
 <Call_Tool_List_Files></Call_Tool_List_Files>
 
-## Read file content (with optional line range)
-<read_content_file path="relative/path.py" from_lines="1" to_lines="50"></read_content_file>
+## Read file content — always specify line range for large files
+<read_content_file path="relative/path.ext" from_lines="1" to_lines="80"></read_content_file>
 
-## Search for text across files
-<search_in_files query="text to search" max_results="50"></search_in_files>
+## Search across all files — start broad, then narrow
+<search_in_files query="what you are looking for" max_results="30"></search_in_files>
 
-## Edit specific lines in an existing file
-<lines_editor path="relative/path.py">
+## Edit specific lines — DEFAULT for ALL code edits (safe for any content)
+<lines_editor path="relative/path.ext">
 [
   {"op": "replace", "start_line": 12, "end_line": 14, "content": "new line 1\nnew line 2\n"},
-  {"op": "insert", "after_line": 20, "content": "# inserted comment\n"},
+  {"op": "insert", "after_line": 20, "content": "inserted line\n"},
   {"op": "delete", "start_line": 30, "end_line": 32}
 ]
 </lines_editor>
 
-## Create a new file (new files only)
-<create_file path="relative/new_file.py">COMPLETE FILE CONTENT</create_file>
+## Patch an existing file — ONLY for trivial single-line plain-text swaps
+## WARNING: NEVER use if content has >, <, ", newlines, HTML, JSX, or generics
+<patch_file path="relative/path.ext" search="exact unique text" replace="new text"></patch_file>
 
-## Run a shell command
-<run_command command="shell command here" timeout="30"></run_command>
+## Create a brand-new file (never for existing files)
+<create_file path="relative/new_file.ext">
+COMPLETE FILE CONTENT HERE — NO PLACEHOLDERS, NO ELLIPSIS
+</create_file>
 
-# COMPLETION CONTRACT
-- When ALL work is truly finished, end your final response (no tool tag) with:
-    task_status=completed
-- Do NOT add this marker until everything is verified and done.
-- Do NOT use the marker in Plan mode.
+## Run a shell command — always verify after edits
+<run_command command="npm run build" timeout="120"></run_command>
 
-# CODE QUALITY
-- Use clear names, small functions, explicit error handling.
-- Validate inputs and surface errors loudly — no silent fallbacks.
-- Match existing project conventions (style, structure, language).
-- Prefer the smallest correct change that solves the problem.
+# COMPLETION MARKER
+When ALL work is truly done and verified, end your final response (no tool tags) with:
+task_status=completed
 """
 
 
@@ -170,7 +122,7 @@ def build_system_prompt(mode: str = "agent", task_context: str = "") -> str:
     try:
         from context_manager import build_context_block, get_file_tree_summary
         if task_context:
-            ctx_block = build_context_block(task_context, top_k=6)
+            ctx_block = build_context_block(task_context, top_k=12)
             if ctx_block:
                 parts.append(f"\n\n{ctx_block}")
         tree = get_file_tree_summary(max_files=60)
@@ -179,42 +131,27 @@ def build_system_prompt(mode: str = "agent", task_context: str = "") -> str:
     except Exception:
         pass
 
-    if mode == "ask":
-        parts.append(
-            "\n\nMODE: ASK\n"
-            "- Answer questions only in plain text.\n"
-            "- NEVER call tools.\n"
-            "- If the user requests an action, clarify what you need before doing anything.\n"
-        )
-    elif mode == "debug":
-        parts.append(
-            "\n\nMODE: DEBUG\n"
-            "- Identify the root cause with minimal reproduction steps.\n"
-            "- Use read/search/run tools to gather evidence before changing any code.\n"
-            "- Fix the minimal set of lines needed; always use <lines_editor> for targeted fixes.\n"
-            "- Run a verification command after each fix to confirm the issue is resolved.\n"
-            "- End with task_status=completed when the bug is fixed and verified.\n"
-        )
-    elif mode == "plan":
-        parts.append(
-            "\n\nMODE: PLAN\n"
-            "- Create PLAN.md (scope, goals, tech stack, file tree, milestones) and TODOS.md (checklist).\n"
-            "- TODOS.md: use '- [ ]' items grouped by milestone.\n"
-            "- After both files are created, summarise briefly and end with: task_status=completed\n"
-        )
-    elif mode == "agent":
+    if True:
         parts.append(
             "\n\nMODE: AGENT\n"
-            "- Build, edit, and verify code autonomously without stopping for 'Continue' prompts.\n"
-            "- If genuinely ambiguous, ask ONE concise clarifying question in plain text, then wait.\n"
-            "- Otherwise: chain all required tool tags sequentially and complete the task in one run.\n"
-            "- ALWAYS use <lines_editor> for targeted file edits — read line numbers first, then edit only what's needed.\n"
-            "- Only use <create_file> for files that do not yet exist.\n"
-            "- End the final summary (no tool tags) with: task_status=completed\n"
+            "- Keep working autonomously until the task is COMPLETELY resolved. Never stop for 'Continue'.\n"
+            "- Search FIRST (broad → narrow), read ONLY the lines needed, then edit with <lines_editor>.\n"
+            "- <lines_editor> is the DEFAULT edit tool — handles HTML, JSX, generics, multi-line, everything.\n"
+            "- <patch_file> is ONLY for trivial plain-text one-liners with zero > < \" or newlines.\n"
+            "- If a tool tag was malformed last turn, switch to <lines_editor> immediately — do NOT retry patch_file.\n"
+            "- After all edits, run a build or lint command to verify. Fix failures without stopping.\n"
+            "- If genuinely stuck (missing credentials, external resource), ask ONE concise question.\n"
+            "- End final response (no tool tags) with: task_status=completed\n"
         )
 
     if os.path.isdir(rules_dir):
-        for name in ("SYSTEM_INSTRUCTIONS.md", "AGENT_RULES.md", "TOOL_RULES.md"):
+        for name in (
+            "SYSTEM_INSTRUCTIONS.md",
+            "AGENT_RULES.md",
+            "TOOL_RULES.md",
+            "PROJECT_RULES.md",
+            "LANGUAGE_GUIDES.md",
+        ):
             content = _read_rule_file(os.path.join(rules_dir, name))
             if content:
                 parts.append(f"\n\n# {name}\n{content}")
@@ -578,6 +515,28 @@ async def workspace_lines_edit(data: dict):
     return result
 
 
+@app.post("/workspace/file-stats")
+async def workspace_file_stats(data: dict):
+    """Return character count and token estimate for a list of file paths.
+    Used by the frontend to show pinned file sizes before a task runs."""
+    paths = data.get("paths", [])
+    stats = []
+    for path in paths:
+        try:
+            content = read_file(path)
+            if isinstance(content, dict):
+                content = content.get("content", "")
+            chars = len(content) if isinstance(content, str) else 0
+            stats.append({
+                "path":   path,
+                "chars":  chars,
+                "tokens": max(1, chars // 4),
+            })
+        except Exception:
+            stats.append({"path": path, "chars": 0, "tokens": 0})
+    return {"stats": stats}
+
+
 @app.post("/workspace/search")
 async def workspace_search(data: dict):
 
@@ -620,6 +579,7 @@ async def chat_agent(data: dict):
     mode = data.get("mode", "agent")
     base_url = data.get("baseUrl")
     api_key = data.get("apiKey")
+    pinned_files: list = data.get("pinnedFiles") or []
 
     if not model:
         return {"error": "Missing model"}
@@ -640,6 +600,48 @@ async def chat_agent(data: dict):
                 break
 
     system_prompt = build_system_prompt(mode, task_context=first_user_msg)
+
+    # ── Collect smart files (for context_init event) ──────────────────────────
+    smart_file_infos: list = []
+    try:
+        from context_manager import get_relevant_files
+        relevant = get_relevant_files(first_user_msg, top_k=12)
+        smart_file_infos = [
+            {"path": m["path"], "chars": m["size"], "tokens": max(1, m["size"] // 4)}
+            for m in relevant
+        ]
+    except Exception:
+        pass
+
+    # ── Inject pinned file contents into system prompt ────────────────────────
+    pinned_infos: list = []
+    if pinned_files and isinstance(pinned_files, list):
+        pinned_parts: list[str] = []
+        for path in pinned_files:
+            try:
+                content = read_file(path)
+                if isinstance(content, dict):
+                    content = content.get("content", "")
+                if content and isinstance(content, str) and content.strip():
+                    chars = len(content)
+                    preview = content[:8000]
+                    ellipsis = "\n... (truncated)" if chars > 8000 else ""
+                    pinned_parts.append(
+                        f"\n### {path} ({chars} chars)\n```\n{preview}{ellipsis}\n```"
+                    )
+                    pinned_infos.append({
+                        "path": path,
+                        "chars": chars,
+                        "tokens": max(1, chars // 4),
+                    })
+            except Exception:
+                pass
+        if pinned_parts:
+            system_prompt += (
+                "\n\n## Pinned Files (user-selected — always keep these in mind)\n"
+                + "\n".join(pinned_parts)
+            )
+
     messages = [{"role": "system", "content": system_prompt}]
     if isinstance(messages_in, list) and len(messages_in) > 0:
         for m in messages_in:
@@ -655,6 +657,8 @@ async def chat_agent(data: dict):
     max_output_tokens = int(data.get("maxOutputTokens") or 16384)
 
     async def generate():
+        # Emit context_init so the frontend panel knows what was pre-loaded
+        yield f"data: {json.dumps({'type': 'context_init', 'smart_files': smart_file_infos, 'pinned_files': pinned_infos})}\n\n"
         async for event in run_agent(client, model, messages, mode=mode, max_output_tokens=max_output_tokens):
             yield f"data: {json.dumps(event)}\n\n"
 

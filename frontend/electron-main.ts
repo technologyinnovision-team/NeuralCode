@@ -118,6 +118,26 @@ function findBundledExecutable(): string | null {
   const backendDir = getBackendDir()
   const candidates = isWindows ? ["server.exe", "server"] : ["server"]
 
+  if (isDev) {
+    // In dev mode the PyInstaller output is always at backend/dist/server/.
+    // We must NOT do a recursive search of the entire backend/ folder because
+    // PyInstaller also writes an incomplete stub exe into backend/build/server/
+    // (its work directory). Loading that stub causes the "Failed to load Python
+    // DLL" error since the _internal/ bundle is missing alongside it.
+    const distServerDir = path.join(backendDir, "dist", "server")
+    for (const candidate of candidates) {
+      const candidatePath = path.join(distServerDir, candidate)
+      if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+        console.log(`Found bundled server at: ${candidatePath}`)
+        return candidatePath
+      }
+    }
+    // No built exe found — caller will fall back to system Python
+    return null
+  }
+
+  // Packaged mode: electron-builder copies dist/server/* into resources/backend/
+  // so the exe sits directly inside backendDir.
   for (const candidate of candidates) {
     const candidatePath = path.join(backendDir, candidate)
     if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
@@ -125,27 +145,7 @@ function findBundledExecutable(): string | null {
     }
   }
 
-  if (!fs.existsSync(backendDir)) {
-    return null
-  }
-
-  const recursiveFind = (dir: string): string | null => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const entryPath = path.join(dir, entry.name)
-      if (entry.isFile() && candidates.includes(entry.name)) {
-        return entryPath
-      }
-      if (entry.isDirectory()) {
-        const found = recursiveFind(entryPath)
-        if (found) {
-          return found
-        }
-      }
-    }
-    return null
-  }
-
-  return recursiveFind(backendDir)
+  return null
 }
 
 // Start Python backend
